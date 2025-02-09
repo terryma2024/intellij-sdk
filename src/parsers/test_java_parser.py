@@ -33,6 +33,11 @@ def test_parse_java_classes(java_test_file):
         "Annos",
         "Gen",
         "A",
+        "Dummy01",
+        "Dummy3",
+        "Dummy1",
+        "Dummy03",
+        "Dummy2",
     ]
 
     # Verify all expected classes are found
@@ -52,7 +57,7 @@ def test_parse_java_methods(java_test_file):
         None,
     )
     assert main_method is not None, "Expected 'main' method in Lambdas class"
-    assert "main" in str(main_method.get("comments", "main")), (
+    assert "main" in str(main_method.get("comment", "")), (
         "Expected 'main' comment in Lambdas class main method"
     )
 
@@ -62,7 +67,7 @@ def test_parse_java_methods(java_test_file):
         (method for method in for_class["methods"] if method["name"] == "bar"), None
     )
     assert bar_method is not None, "Expected 'bar' method in For class"
-    assert "bar" in str(bar_method.get("comments", "")), (
+    assert "bar" in str(bar_method.get("comment", "")), (
         "Expected 'bar' comment in For class bar method"
     )
 
@@ -85,7 +90,7 @@ def test_parse_java_interfaces(java_test_file):
     assert sqrt_method is not None, (
         "Expected 'sqrt' default method in Formula interface"
     )
-    assert "sqrt" in str(sqrt_method.get("comments", "")), (
+    assert "sqrt" in str(sqrt_method.get("comment", "")), (
         "Expected 'sqrt' comment in Formula interface sqrt method"
     )
 

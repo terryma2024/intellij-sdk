@@ -1,7 +1,6 @@
 from antlr4 import InputStream, ParseTreeListener, CommonTokenStream, ParseTreeWalker
 from antlr4.error.DiagnosticErrorListener import DiagnosticErrorListener
-from antlr4.atn.PredictionMode import PredictionMode
-from antlr4.error.ErrorStrategy import DefaultErrorStrategy
+from antlr4.Token import Token
 from loguru import logger
 from .JavaLexer import JavaLexer
 from .JavaParser import JavaParser
@@ -18,15 +17,35 @@ def setup_java_parser():
 
 
 class JavaListener(ParseTreeListener):
-    def __init__(self, source):
+    def __init__(self, source, comments):
         self.source = source
         self.class_info = []
         self.class_stack = []
         self.current_class = None
         self.nesting_level = 0
         self.current_comment = ""
-        self.last_token_line = -1
+        self.last_processed_line = -1
+        self.comments = comments
         logger.debug("Initialized JavaListener")
+
+    def find_nearest_comment(self, target_line):
+        # Search for comments between last processed line and current target line
+        nearest_comment = None
+        for comment, line in reversed(self.comments):
+            if self.last_processed_line < line < target_line:
+                # Clean up the comment by removing comment markers
+                cleaned_comment = comment
+                # Remove multi-line comment markers
+                if cleaned_comment.startswith("/*") and cleaned_comment.endswith("*/"):
+                    cleaned_comment = cleaned_comment[2:-2].strip()
+                # Remove single-line comment markers
+                elif cleaned_comment.startswith("//"):
+                    cleaned_comment = cleaned_comment[2:].strip()
+                nearest_comment = cleaned_comment
+                break
+        # Update last processed line
+        self.last_processed_line = target_line
+        return nearest_comment or "No Comment"
 
     def enterClassDeclaration(self, ctx):
         logger.debug("Entering class declaration")
@@ -56,7 +75,12 @@ class JavaListener(ParseTreeListener):
                 self.class_stack.append(self.current_class)
 
             # Create new class context
-            self.current_class = {"name": identifier, "constants": [], "methods": []}
+            self.current_class = {
+                "name": identifier,
+                "constants": [],
+                "methods": [],
+                "comment": self.find_nearest_comment(ctx.start.line),
+            }
             logger.debug(f"Created new class context for: {identifier}")
 
             # Add class to class_info immediately
@@ -97,7 +121,12 @@ class JavaListener(ParseTreeListener):
                 self.class_stack.append(self.current_class)
 
             # Create new class context
-            self.current_class = {"name": identifier, "constants": [], "methods": []}
+            self.current_class = {
+                "name": identifier,
+                "constants": [],
+                "methods": [],
+                "comment": self.find_nearest_comment(ctx.start.line),
+            }
 
             # Only add top-level enums to class_info immediately
             if self.nesting_level == 1:
@@ -145,7 +174,12 @@ class JavaListener(ParseTreeListener):
                 self.class_stack.append(self.current_class)
 
             # Create new class context
-            self.current_class = {"name": identifier, "constants": [], "methods": []}
+            self.current_class = {
+                "name": identifier,
+                "constants": [],
+                "methods": [],
+                "comment": self.find_nearest_comment(ctx.start.line),
+            }
             logger.debug(f"Created new class context for: {identifier}")
 
             # Only add top-level classes to class_info immediately
@@ -191,7 +225,12 @@ class JavaListener(ParseTreeListener):
                 self.class_stack.append(self.current_class)
 
             # Create new class context
-            self.current_class = {"name": identifier, "constants": [], "methods": []}
+            self.current_class = {
+                "name": identifier,
+                "constants": [],
+                "methods": [],
+                "comment": self.find_nearest_comment(ctx.start.line),
+            }
             logger.debug(f"Created new interface context for: {identifier}")
 
             # Add interface to class_info immediately
@@ -270,9 +309,11 @@ class JavaListener(ParseTreeListener):
                         for method in self.current_class["methods"]
                     ):
                         self.current_class["methods"].append(
-                            {"name": identifier, "comment": self.current_comment}
+                            {
+                                "name": identifier,
+                                "comment": self.find_nearest_comment(ctx.start.line),
+                            }
                         )
-                        self.current_comment = ""  # Reset the comment after using it
                         logger.debug(
                             f"Added method '{identifier}' to class {self.current_class['name']}"
                         )
@@ -304,7 +345,10 @@ class JavaListener(ParseTreeListener):
 
             if identifier:
                 self.current_class["methods"].append(
-                    {"name": identifier, "comment": ""}
+                    {
+                        "name": identifier,
+                        "comment": self.find_nearest_comment(ctx.start.line),
+                    }
                 )
                 logger.debug(
                     f"Added constructor '{identifier}' to class {self.current_class['name']}"
@@ -355,44 +399,16 @@ class JavaListener(ParseTreeListener):
 
             if identifier:
                 self.current_class["methods"].append(
-                    {"name": identifier, "comment": ""}
+                    {
+                        "name": identifier,
+                        "comment": self.find_nearest_comment(ctx.start.line),
+                    }
                 )
                 logger.debug(
                     f"Added interface method '{identifier}' to interface {self.current_class['name']}"
                 )
             else:
                 logger.debug("No interface method identifier found")
-
-    def visitTerminal(self, node):
-        # Get the token
-        token = node.getSymbol()
-
-        # Get the token type
-        token_type = token.type
-
-        # Get the line number
-        line = token.line
-
-        # If this is a comment token and it's on a new line
-        if (
-            token_type in [JavaLexer.COMMENT, JavaLexer.LINE_COMMENT]
-            and line > self.last_token_line
-        ):
-            comment_text = token.text
-
-            # Clean up the comment text
-            if comment_text.startswith("/*"):
-                comment_text = comment_text[2:-2].strip()  # Remove /* and */
-            elif comment_text.startswith("//"):
-                comment_text = comment_text[2:].strip()  # Remove //
-
-            # Append to current comment if there's already content, otherwise set it
-            if self.current_comment:
-                self.current_comment += "\n" + comment_text
-            else:
-                self.current_comment = comment_text
-
-        self.last_token_line = line
 
 
 def parse_java_file(content, parser=None):
@@ -417,11 +433,20 @@ def parse_java_file(content, parser=None):
         parser.removeErrorListeners()  # Remove default error listeners
         parser.addErrorListener(DiagnosticErrorListener())  # Add diagnostic listener
 
+        stream.fill()
+        comments = []
+        for token in stream.tokens:
+            if token.channel == Token.HIDDEN_CHANNEL and token.type in [
+                JavaLexer.COMMENT,
+                JavaLexer.LINE_COMMENT,
+            ]:
+                comments.append((token.text.strip(), token.line))
+
         # Parse the compilation unit
         tree = parser.compilationUnit()
 
         # Create and run the listener
-        listener = JavaListener(content)
+        listener = JavaListener(content, comments)
         walker = ParseTreeWalker()
         walker.walk(listener, tree)
 
