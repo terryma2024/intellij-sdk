@@ -1,7 +1,10 @@
 from antlr4 import InputStream, ParseTreeListener, CommonTokenStream, ParseTreeWalker
+from antlr4.error.DiagnosticErrorListener import DiagnosticErrorListener
+from antlr4.atn.PredictionMode import PredictionMode
+from antlr4.error.ErrorStrategy import DefaultErrorStrategy
 from loguru import logger
-from .Java20Lexer import Java20Lexer
-from .Java20Parser import Java20Parser
+from .JavaLexer import JavaLexer
+from .JavaParser import JavaParser
 
 
 def setup_java_parser():
@@ -21,6 +24,96 @@ class JavaListener(ParseTreeListener):
         self.class_stack = []
         self.current_class = None
         self.nesting_level = 0
+        self.current_comment = ""
+        self.last_token_line = -1
+        logger.debug("Initialized JavaListener")
+
+    def enterClassDeclaration(self, ctx):
+        logger.debug("Entering class declaration")
+        # Process the class declaration directly
+        self.nesting_level += 1
+
+        # Find the class name
+        identifier = None
+        for child in ctx.getChildren():
+            if isinstance(
+                child, (JavaParser.TypeIdentifierContext, JavaParser.IdentifierContext)
+            ):
+                text = child.getText()
+                # Skip if the text is a Java keyword or starts with @ (annotation)
+                if not text.startswith("@") and text not in [
+                    "class",
+                    "interface",
+                    "enum",
+                ]:
+                    identifier = text
+                    logger.debug(f"Found class identifier: {identifier}")
+                    break
+
+        if identifier:
+            # Push current class to stack before creating new one
+            if self.current_class:
+                self.class_stack.append(self.current_class)
+
+            # Create new class context
+            self.current_class = {"name": identifier, "constants": [], "methods": []}
+            logger.debug(f"Created new class context for: {identifier}")
+
+            # Add class to class_info immediately
+            self.class_info.append(self.current_class)
+        else:
+            logger.debug("No class identifier found")
+
+    def exitClassDeclaration(self, ctx):
+        if self.current_class:
+            # Restore parent class from stack
+            self.current_class = self.class_stack.pop() if self.class_stack else None
+        self.nesting_level -= 1
+
+    def enterEnumDeclaration(self, ctx):
+        # Track nesting level
+        self.nesting_level += 1
+
+        # Find the enum name
+        identifier = None
+        for child in ctx.getChildren():
+            if isinstance(
+                child, (JavaParser.TypeIdentifierContext, JavaParser.IdentifierContext)
+            ):
+                text = child.getText()
+                # Skip if the text is a Java keyword or starts with @ (annotation)
+                if not text.startswith("@") and text not in [
+                    "class",
+                    "interface",
+                    "enum",
+                ]:
+                    identifier = text
+                    logger.debug(f"Found enum identifier: {identifier}")
+                    break
+
+        if identifier:
+            # Push current class to stack before creating new one
+            if self.current_class:
+                self.class_stack.append(self.current_class)
+
+            # Create new class context
+            self.current_class = {"name": identifier, "constants": [], "methods": []}
+
+            # Only add top-level enums to class_info immediately
+            if self.nesting_level == 1:
+                self.class_info.append(self.current_class)
+        else:
+            logger.debug("No enum identifier found")
+
+    def exitEnumDeclaration(self, ctx):
+        if self.current_class:
+            # Only append nested enums to class_info when exiting
+            if self.nesting_level > 1:
+                self.class_info.append(self.current_class)
+
+            # Restore parent class from stack
+            self.current_class = self.class_stack.pop() if self.class_stack else None
+        self.nesting_level -= 1
 
     def enterNormalClassDeclaration(self, ctx):
         # Track nesting level
@@ -31,10 +124,20 @@ class JavaListener(ParseTreeListener):
         logger.debug("Processing normal class declaration...")
         for child in ctx.getChildren():
             logger.debug(f"Child type: {type(child).__name__}, text: {child.getText()}")
-            if isinstance(child, Java20Parser.TypeIdentifierContext):
-                identifier = child.getText()
-                logger.debug(f"Found class identifier: {identifier}")
-                break
+            # Look for both TypeIdentifier and Identifier contexts since class names can appear in either
+            if isinstance(
+                child, (JavaParser.TypeIdentifierContext, JavaParser.IdentifierContext)
+            ):
+                text = child.getText()
+                # Skip if the text is a Java keyword or starts with @ (annotation)
+                if not text.startswith("@") and text not in [
+                    "class",
+                    "interface",
+                    "enum",
+                ]:
+                    identifier = text
+                    logger.debug(f"Found class identifier: {identifier}")
+                    break
 
         if identifier:
             # Push current class to stack before creating new one
@@ -61,16 +164,26 @@ class JavaListener(ParseTreeListener):
             self.current_class = self.class_stack.pop() if self.class_stack else None
         self.nesting_level -= 1
 
-    def enterNormalInterfaceDeclaration(self, ctx):
+    def enterInterfaceDeclaration(self, ctx):
         # Track nesting level
         self.nesting_level += 1
 
         # Find the interface name
         identifier = None
         for child in ctx.getChildren():
-            if isinstance(child, Java20Parser.TypeIdentifierContext):
-                identifier = child.getText()
-                break
+            if isinstance(
+                child, (JavaParser.TypeIdentifierContext, JavaParser.IdentifierContext)
+            ):
+                text = child.getText()
+                # Skip if the text is a Java keyword or starts with @ (annotation)
+                if not text.startswith("@") and text not in [
+                    "class",
+                    "interface",
+                    "enum",
+                ]:
+                    identifier = text
+                    logger.debug(f"Found interface identifier: {identifier}")
+                    break
 
         if identifier:
             # Push current class to stack before creating new one
@@ -79,10 +192,10 @@ class JavaListener(ParseTreeListener):
 
             # Create new class context
             self.current_class = {"name": identifier, "constants": [], "methods": []}
+            logger.debug(f"Created new interface context for: {identifier}")
 
-            # Only add top-level interfaces to class_info immediately
-            if self.nesting_level == 1:
-                self.class_info.append(self.current_class)
+            # Add interface to class_info immediately
+            self.class_info.append(self.current_class)
         else:
             logger.debug("No interface identifier found")
 
@@ -103,34 +216,32 @@ class JavaListener(ParseTreeListener):
             )
             identifier = None
 
-            # First try to find the method identifier directly in the method declarator
+            # Look for the method identifier in the children
             for child in ctx.getChildren():
-                if isinstance(child, Java20Parser.MethodHeaderContext):
-                    for header_child in child.getChildren():
-                        if isinstance(
-                            header_child, Java20Parser.MethodDeclaratorContext
-                        ):
-                            # Get the first identifier that appears before a parenthesis
-                            method_text = header_child.getText()
-                            method_parts = method_text.split("(")
-                            if len(method_parts) > 0:
-                                # Extract the method name by taking the last part before the parenthesis
-                                # and removing any annotations or type parameters
-                                method_name = method_parts[0].strip()
-                                # Remove any annotations (starting with @)
-                                while "@" in method_name:
-                                    method_name = method_name[method_name.find("@") :]
-                                    method_name = method_name[
-                                        method_name.find(" ") + 1 :
-                                    ]
-                                # Remove any generic type parameters
-                                if "<" in method_name:
-                                    method_name = method_name[: method_name.find("<")]
-                                # Get the final part which should be the method name
-                                identifier = method_name.split()[-1]
-                                logger.debug(f"Found method identifier: {identifier}")
-                                break
-                    if identifier:
+                if isinstance(
+                    child,
+                    (JavaParser.TypeIdentifierContext, JavaParser.IdentifierContext),
+                ):
+                    text = child.getText()
+                    # Skip if the text is a Java keyword or starts with @ (annotation)
+                    if not text.startswith("@") and text not in [
+                        "public",
+                        "private",
+                        "protected",
+                        "static",
+                        "final",
+                        "abstract",
+                        "synchronized",
+                        "native",
+                        "strictfp",
+                        "default",
+                        "transient",
+                        "volatile",
+                        "class",
+                        "interface",
+                    ]:
+                        identifier = text
+                        logger.debug(f"Found method identifier: {identifier}")
                         break
 
             # Add the method if an identifier was found
@@ -159,8 +270,9 @@ class JavaListener(ParseTreeListener):
                         for method in self.current_class["methods"]
                     ):
                         self.current_class["methods"].append(
-                            {"name": identifier, "comment": ""}
+                            {"name": identifier, "comment": self.current_comment}
                         )
+                        self.current_comment = ""  # Reset the comment after using it
                         logger.debug(
                             f"Added method '{identifier}' to class {self.current_class['name']}"
                         )
@@ -177,13 +289,13 @@ class JavaListener(ParseTreeListener):
                 logger.debug(
                     f"Constructor child type: {type(child).__name__}, text: {child.getText()}"
                 )
-                if isinstance(child, Java20Parser.ConstructorDeclaratorContext):
+                if isinstance(child, JavaParser.ConstructorDeclarationContext):
                     logger.debug("Found constructor declarator")
                     for decl_child in child.getChildren():
                         logger.debug(
                             f"Declarator child type: {type(decl_child).__name__}, text: {decl_child.getText()}"
                         )
-                        if isinstance(decl_child, Java20Parser.TypeIdentifierContext):
+                        if isinstance(decl_child, JavaParser.TypeIdentifierContext):
                             identifier = decl_child.getText()
                             logger.debug(f"Found constructor identifier: {identifier}")
                             break
@@ -200,43 +312,45 @@ class JavaListener(ParseTreeListener):
             else:
                 logger.debug("No constructor identifier found")
 
-    def enterInterfaceMethodDeclaration(self, ctx):
+    def enterInterfaceCommonBodyDeclaration(self, ctx):
         if self.current_class:
             logger.debug(
                 f"Processing interface method declaration in: {self.current_class['name']}"
             )
             identifier = None
+
+            # Look for the method identifier in the children
             for child in ctx.getChildren():
-                logger.debug(
-                    f"Interface method child type: {type(child).__name__}, text: {child.getText()}"
-                )
-                if isinstance(child, Java20Parser.InterfaceMethodModifierContext):
-                    logger.debug("Found interface method modifier")
-                elif isinstance(child, Java20Parser.MethodHeaderContext):
-                    logger.debug("Found method header")
-                    for header_child in child.getChildren():
-                        logger.debug(
-                            f"Header child type: {type(header_child).__name__}, text: {header_child.getText()}"
-                        )
-                        if isinstance(
-                            header_child, Java20Parser.MethodDeclaratorContext
-                        ):
-                            logger.debug("Found method declarator")
-                            for method_child in header_child.getChildren():
-                                logger.debug(
-                                    f"Declarator child type: {type(method_child).__name__}, text: {method_child.getText()}"
-                                )
-                                if isinstance(
-                                    method_child, Java20Parser.IdentifierContext
-                                ):
-                                    identifier = method_child.getText()
-                                    logger.debug(
-                                        f"Found interface method identifier: {identifier}"
-                                    )
-                                    break
-                            if identifier:
-                                break
-                    if identifier:
+                if isinstance(child, JavaParser.IdentifierContext):
+                    text = child.getText()
+                    # Skip if the text is a Java keyword or starts with @ (annotation)
+                    if not text.startswith("@") and text not in [
+                        "public",
+                        "private",
+                        "protected",
+                        "static",
+                        "final",
+                        "abstract",
+                        "synchronized",
+                        "native",
+                        "strictfp",
+                        "default",
+                        "transient",
+                        "volatile",
+                        "void",
+                        "class",
+                        "interface",
+                        "double",
+                        "int",
+                        "boolean",
+                        "char",
+                        "byte",
+                        "short",
+                        "long",
+                        "float",
+                    ]:
+                        identifier = text
+                        logger.debug(f"Found interface method identifier: {identifier}")
                         break
 
             if identifier:
@@ -248,6 +362,37 @@ class JavaListener(ParseTreeListener):
                 )
             else:
                 logger.debug("No interface method identifier found")
+
+    def visitTerminal(self, node):
+        # Get the token
+        token = node.getSymbol()
+
+        # Get the token type
+        token_type = token.type
+
+        # Get the line number
+        line = token.line
+
+        # If this is a comment token and it's on a new line
+        if (
+            token_type in [JavaLexer.COMMENT, JavaLexer.LINE_COMMENT]
+            and line > self.last_token_line
+        ):
+            comment_text = token.text
+
+            # Clean up the comment text
+            if comment_text.startswith("/*"):
+                comment_text = comment_text[2:-2].strip()  # Remove /* and */
+            elif comment_text.startswith("//"):
+                comment_text = comment_text[2:].strip()  # Remove //
+
+            # Append to current comment if there's already content, otherwise set it
+            if self.current_comment:
+                self.current_comment += "\n" + comment_text
+            else:
+                self.current_comment = comment_text
+
+        self.last_token_line = line
 
 
 def parse_java_file(content, parser=None):
@@ -264,11 +409,15 @@ def parse_java_file(content, parser=None):
     try:
         # Create the lexer and stream
         input_stream = InputStream(content)
-        lexer = Java20Lexer(input_stream)
+        lexer = JavaLexer(input_stream)
         stream = CommonTokenStream(lexer)
 
-        # Create the parser
-        parser = Java20Parser(stream)
+        # Create the parser with diagnostic logging
+        parser = JavaParser(stream)
+        parser.removeErrorListeners()  # Remove default error listeners
+        parser.addErrorListener(DiagnosticErrorListener())  # Add diagnostic listener
+
+        # Parse the compilation unit
         tree = parser.compilationUnit()
 
         # Create and run the listener

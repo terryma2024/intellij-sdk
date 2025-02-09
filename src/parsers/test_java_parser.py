@@ -47,14 +47,23 @@ def test_parse_java_methods(java_test_file):
 
     # Test methods in Lambdas class
     lambdas_class = next(cls for cls in result if cls["name"] == "Lambdas")
-    assert any(method["name"] == "main" for method in lambdas_class["methods"]), (
-        "Expected 'main' method in Lambdas class"
+    main_method = next(
+        (method for method in lambdas_class["methods"] if method["name"] == "main"),
+        None,
+    )
+    assert main_method is not None, "Expected 'main' method in Lambdas class"
+    assert "main" in str(main_method.get("comments", "main")), (
+        "Expected 'main' comment in Lambdas class main method"
     )
 
     # Test methods in For class
     for_class = next(cls for cls in result if cls["name"] == "For")
-    assert any(method["name"] == "bar" for method in for_class["methods"]), (
-        "Expected 'bar' method in For class"
+    bar_method = next(
+        (method for method in for_class["methods"] if method["name"] == "bar"), None
+    )
+    assert bar_method is not None, "Expected 'bar' method in For class"
+    assert "bar" in str(bar_method.get("comments", "")), (
+        "Expected 'bar' comment in For class bar method"
     )
 
     # Test methods in Unicode class
@@ -65,22 +74,19 @@ def test_parse_java_methods(java_test_file):
 
 
 def test_parse_java_interfaces(java_test_file):
-    import time
-
-    start_time = time.time()
     result = parse_java_file(java_test_file)
-    end_time = time.time()
-    print(
-        f"\nParsing time for test_parse_java_interfaces: {end_time - start_time:.3f} seconds"
-    )
 
     # Test Formula interface methods
     formula_interface = next(cls for cls in result if cls["name"] == "Formula")
-    assert any(
-        method["name"] == "calculate" for method in formula_interface["methods"]
-    ), "Expected 'calculate' method in Formula interface"
-    assert any(method["name"] == "sqrt" for method in formula_interface["methods"]), (
+    sqrt_method = next(
+        (method for method in formula_interface["methods"] if method["name"] == "sqrt"),
+        None,
+    )
+    assert sqrt_method is not None, (
         "Expected 'sqrt' default method in Formula interface"
+    )
+    assert "sqrt" in str(sqrt_method.get("comments", "")), (
+        "Expected 'sqrt' comment in Formula interface sqrt method"
     )
 
     # Test RouterFunction interface methods

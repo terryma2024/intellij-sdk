@@ -1,5 +1,4 @@
 // Test file for complex Java annotations
-
 public class Annos {
     public @interface Dummy4 {
         String[] value();
