@@ -1,7 +1,7 @@
 import os
 from typing import List, Dict
-from parsers.java_parser import parse_java_file
-from parsers.kotlin_parser import setup_kotlin_parser, parse_kotlin_file
+from parsers.java.java_parser import parse_java_file
+from parsers.kotlin.kotlin_parser import setup_kotlin_parser, parse_kotlin_file
 
 
 class MarkdownWriter:
