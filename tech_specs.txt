@@ -1,0 +1,91 @@
+# Technical Specifications
+
+## 1. Project Overview
+This project implements a code parsing and analysis system for IntelliJ SDK, focusing on Java and Kotlin language support using ANTLR4 for parsing.
+
+## 2. System Architecture
+
+### 2.1 Core Components
+- Parser Module
+  - Java Parser (ANTLR4-based)
+  - Kotlin Parser (ANTLR4-based)
+- AST Processing
+- Code Analysis
+
+### 2.2 File Structure
+```
+src/
+├── parsers/
+│   ├── java/
+│   │   └── Java20ParserListener.py
+│   └── kotlin/
+│       ├── kotlin_parser.py
+│       ├── KotlinParser.g4
+│       └── KotlinParserListener.py
+```
+
+## 3. Implementation Details
+
+### 3.1 Kotlin Parser Implementation
+- Uses ANTLR4 for parsing Kotlin source code
+- Implements custom listener pattern for AST traversal
+- Handles class declarations, methods, and properties
+- Supports nested class structures
+- Processes extension functions
+
+### 3.2 Key Features
+- Class information extraction
+- Method detection and analysis
+- Constant declaration processing
+- Support for Kotlin-specific features (extension functions, etc.)
+
+### 3.3 Data Structures
+- Class information stored in dictionary format:
+  ```python
+  {
+    "name": "ClassName",
+    "constants": [{"name": "CONST_NAME", "comment": ""}],
+    "methods": [{"name": "methodName", "comment": ""}]
+  }
+  ```
+
+## 4. Code Standards
+
+### 4.1 Python Code Standards
+- PEP 8 compliant
+- Type hints for function parameters
+- Comprehensive logging using loguru
+- Error handling with try-except blocks
+
+### 4.2 Parser Grammar Standards
+- ANTLR4 grammar files (.g4) follow official Kotlin grammar
+- Clear rule naming conventions
+- Modular grammar structure
+
+## 5. Performance Considerations
+- Efficient AST traversal
+- Memory management for large files
+- Optimized listener implementation
+
+## 6. Future Improvements
+- Add support for more Kotlin features
+- Enhance error recovery
+- Implement caching for parsed results
+- Add more comprehensive documentation
+- Implement test coverage
+
+## 7. Dependencies
+- ANTLR4 runtime
+- Python 3.x
+- loguru for logging
+
+## 8. Testing Strategy
+- Unit tests for parser components
+- Integration tests for full parsing workflow
+- Test cases for edge cases and error conditions
+
+## 9. Documentation
+- Inline code documentation
+- API documentation
+- Usage examples
+- Setup and configuration guide

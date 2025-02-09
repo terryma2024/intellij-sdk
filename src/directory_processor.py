@@ -1,7 +1,8 @@
 import os
 from typing import List, Dict
+from loguru import logger
 from parsers.java.java_parser import parse_java_file
-from parsers.kotlin.kotlin_parser import setup_kotlin_parser, parse_kotlin_file
+from parsers.kotlin.kotlin_parser import parse_kotlin_file
 
 
 class MarkdownWriter:
@@ -20,7 +21,7 @@ class MarkdownWriter:
         if self.current_file:
             filename = self.current_file.name
             self.current_file.close()
-            print(
+            logger.info(
                 f"Completed writing {filename} with {self._count_lines(filename)} lines"
             )
         filename = f"{self.base_filename}-{self.file_counter}.md"
@@ -90,45 +91,37 @@ class MarkdownWriter:
         if self.current_file:
             filename = self.current_file.name
             self.current_file.close()
-            print(
+            logger.info(
                 f"Completed writing {filename} with {self._count_lines(filename)} lines"
             )
 
 
 def process_directory(source_dir: str, base_output_file: str, max_lines: int = 250000):
-    """
-    Process a directory containing Java and Kotlin files and generate markdown documentation.
-
-    Args:
-        source_dir (str): The source directory to process.
-        base_output_file (str): Base name for the output markdown files.
-        max_lines (int): Maximum number of lines per markdown file.
-    """
-    kotlin_parser = setup_kotlin_parser()
+    """Process a directory containing Java and Kotlin files and generate markdown documentation."""
     writer = MarkdownWriter(base_output_file, max_lines)
 
     for root, _, files in os.walk(source_dir):
         for file in files:
             if file.endswith((".java", ".kt")):
                 full_path = os.path.join(root, file)
+                logger.info(f"Processing file: {full_path}")
                 try:
                     with open(full_path, "r", encoding="utf-8") as infile:
                         content = infile.read()
 
-                    # Get relative path and convert slashes to dots
                     rel_path = os.path.relpath(full_path, source_dir)
                     formatted_path = rel_path.replace("/", ".")
 
                     if file.endswith(".java"):
                         class_info = parse_java_file(content)
                     else:
-                        class_info = parse_kotlin_file(content, kotlin_parser)
+                        class_info = parse_kotlin_file(content)
 
                     if class_info:
                         writer.write_class_info(formatted_path, class_info)
 
                 except Exception as e:
-                    print(f"Error processing {full_path}: {e}")
+                    logger.error(f"Error processing {full_path}: {e}")
 
     writer.close()
-    print(f"Markdown files generated with base name: {base_output_file}")
+    logger.info(f"Markdown files generated with base name: {base_output_file}")
