@@ -169,3 +169,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+intellij-sdk-code-samples/
+intellij-sdk-docs-flat/
+intellij-sdk-docs/
+vendor/
+.DS_Store
+output/
