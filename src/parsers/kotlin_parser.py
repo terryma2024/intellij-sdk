@@ -1,4 +1,5 @@
 from antlr4 import InputStream, ParseTreeListener, CommonTokenStream, ParseTreeWalker
+from loguru import logger
 from .KotlinLexer import KotlinLexer
 from .KotlinParser import KotlinParser
 
@@ -71,18 +72,18 @@ class KotlinListener(ParseTreeListener):
             name = None
             receiver_type = None
 
-            print(
+            logger.debug(
                 f"Processing function declaration in class {self.current_class['name']}"
             )
-            print(f"Total children nodes: {len(children)}")
+            logger.debug(f"Total children nodes: {len(children)}")
 
             for i, child in enumerate(children):
                 text = child.getText()
-                print(f"Processing node {i}: '{text}'")
+                logger.debug(f"Processing node {i}: '{text}'")
 
                 if text == "fun":
                     found_fun = True
-                    print("Found 'fun' keyword")
+                    logger.debug("Found 'fun' keyword")
                     continue
 
                 if found_fun:
@@ -93,12 +94,12 @@ class KotlinListener(ParseTreeListener):
                         "protected",
                         "internal",
                     ]:
-                        print(f"Skipping modifier/annotation: {text}")
+                        logger.debug(f"Skipping modifier/annotation: {text}")
                         continue
 
                     # Skip generic type parameters
                     if text.startswith("<"):
-                        print(f"Skipping generic parameter: {text}")
+                        logger.debug(f"Skipping generic parameter: {text}")
                         continue
 
                     # Look for receiver type and function name
@@ -110,7 +111,7 @@ class KotlinListener(ParseTreeListener):
                         next_next_text = (
                             children[i + 2].getText() if i + 2 < len(children) else ""
                         )
-                        print(
+                        logger.debug(
                             f"Checking for extension function. Current text: '{text}', Next text: '{next_text}', Next next text: '{next_next_text}'"
                         )
 
@@ -129,7 +130,7 @@ class KotlinListener(ParseTreeListener):
                                     name = next_next_text
 
                             if name:
-                                print(
+                                logger.debug(
                                     f"Found extension function - Receiver: {receiver_type}, Name: {name}"
                                 )
                                 break
@@ -140,14 +141,16 @@ class KotlinListener(ParseTreeListener):
                             and text not in ["fun", ":"]
                         ):
                             name = text
-                            print(f"Found regular function name: {name}")
+                            logger.debug(f"Found regular function name: {name}")
                             break
 
             if name:
-                print(f"Adding method '{name}' to class {self.current_class['name']}")
+                logger.debug(
+                    f"Adding method '{name}' to class {self.current_class['name']}"
+                )
                 self.current_class["methods"].append({"name": name, "comment": ""})
             else:
-                print("No function name found in this declaration")
+                logger.debug("No function name found in this declaration")
 
 
 def parse_kotlin_file(content, parser=None):
@@ -178,5 +181,5 @@ def parse_kotlin_file(content, parser=None):
 
         return listener.class_info
     except Exception as e:
-        print(f"Error parsing Kotlin file: {e}")
+        logger.error(f"Error parsing Kotlin file: {e}")
         return []

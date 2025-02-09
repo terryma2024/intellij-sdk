@@ -175,4 +175,5 @@ intellij-sdk-docs-flat/
 intellij-sdk-docs/
 vendor/
 .DS_Store
+src/.DS_Store
 output/

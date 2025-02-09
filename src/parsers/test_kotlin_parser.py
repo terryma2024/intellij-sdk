@@ -1,14 +1,25 @@
 import pytest
-from .kotlin_parser import parse_kotlin_file
+from pathlib import Path
+from src.parsers.kotlin_parser import parse_kotlin_file
 
 
-def test_parse_kotlin_file():
-    # Read the test file
-    with open("src/parsers/test_data/TestClass.kt", "r") as file:
-        content = file.read()
+@pytest.fixture
+def kt_test_file():
+    test_file = Path(__file__).parent / "test_data" / "TestClass.kt"
+    with open(test_file, "r", encoding="utf-8") as f:
+        return f.read()
 
+
+@pytest.fixture
+def kt_extension_test_file():
+    test_file = Path(__file__).parent / "test_data" / "ExtensionFunction.kt"
+    with open(test_file, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def test_parse_kotlin_file(kt_test_file):
     # Parse the file
-    result = parse_kotlin_file(content)
+    result = parse_kotlin_file(kt_test_file)
 
     # Verify the parsing results
     assert len(result) == 1, "Should parse one top-level class"
@@ -46,13 +57,9 @@ def test_parse_kotlin_file():
         assert any(m["name"] == expected for m in methods), f"Missing method {expected}"
 
 
-def test_parse_kotlin_extension_function():
-    # Read the simplified test file
-    with open("src/parsers/test_data/ExtensionFunction.kt", "r") as file:
-        content = file.read()
-
+def test_parse_kotlin_extension_function(kt_extension_test_file):
     # Parse the file
-    result = parse_kotlin_file(content)
+    result = parse_kotlin_file(kt_extension_test_file)
 
     # Verify the parsing results
     assert len(result) == 1, "Should parse one top-level class"
