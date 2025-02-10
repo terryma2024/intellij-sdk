@@ -1,4 +1,6 @@
 from antlr4 import InputStream, ParseTreeListener, CommonTokenStream, ParseTreeWalker
+from antlr4.error.DiagnosticErrorListener import DiagnosticErrorListener
+from antlr4.Token import Token
 from loguru import logger
 from .KotlinLexer import KotlinLexer
 from .KotlinParser import KotlinParser
@@ -15,11 +17,32 @@ def setup_kotlin_parser():
 
 
 class KotlinListener(ParseTreeListener):
-    def __init__(self, source):
+    def __init__(self, source, comments):
         self.source = source
         self.class_info = []
         self.current_class = None
         self.nesting_level = 0
+        self.comments = comments
+        self.last_processed_line = -1
+
+    def find_nearest_comment(self, target_line):
+        # Search for comments between last processed line and current target line
+        nearest_comment = None
+        for comment, line in reversed(self.comments):
+            if self.last_processed_line < line < target_line:
+                # Clean up the comment by removing comment markers
+                cleaned_comment = comment
+                # Remove multi-line comment markers
+                if cleaned_comment.startswith("/*") and cleaned_comment.endswith("*/"):
+                    cleaned_comment = cleaned_comment[2:-2].strip()
+                # Remove single-line comment markers
+                elif cleaned_comment.startswith("//"):
+                    cleaned_comment = cleaned_comment[2:].strip()
+                nearest_comment = cleaned_comment
+                break
+        # Update last processed line
+        self.last_processed_line = target_line
+        return nearest_comment or "No Comment"
 
     def enterClassDeclaration(self, ctx):
         # Track nesting level
@@ -69,6 +92,7 @@ class KotlinListener(ParseTreeListener):
                 "is_interface": is_interface,
                 "is_data_class": is_data_class,
                 "enum_values": [],
+                "comment": self.find_nearest_comment(ctx.start.line),
             }
             logger.debug(
                 f"Created new {'interface' if is_interface else 'class'}: {class_name}"
@@ -93,7 +117,9 @@ class KotlinListener(ParseTreeListener):
 
             if name and not is_private:
                 # Add as property for data class parameters
-                self.current_class["properties"].append({"name": name, "comment": ""})
+                self.current_class["properties"].append(
+                    {"name": name, "comment": self.find_nearest_comment(ctx.start.line)}
+                )
                 logger.debug(
                     f"Added data class parameter '{name}' as property to class {self.current_class['name']}"
                 )
@@ -110,7 +136,10 @@ class KotlinListener(ParseTreeListener):
                 if isinstance(child, KotlinParser.SimpleIdentifierContext):
                     # Found an enum entry name
                     self.current_class["enum_values"].append(
-                        {"name": child.getText(), "comment": ""}
+                        {
+                            "name": child.getText(),
+                            "comment": self.find_nearest_comment(ctx.start.line),
+                        }
                     )
                     logger.debug(
                         f"Added enum value '{child.getText()}' to enum class {self.current_class['name']}"
@@ -133,7 +162,7 @@ class KotlinListener(ParseTreeListener):
 
             # Add companion object to current class
             self.current_class["companion_objects"].append(
-                {"name": name, "comment": ""}
+                {"name": name, "comment": self.find_nearest_comment(ctx.start.line)}
             )
             logger.debug(
                 f"Added companion object '{name}' to class {self.current_class['name']}"
@@ -194,11 +223,17 @@ class KotlinListener(ParseTreeListener):
             if name and not is_private:
                 if is_const:
                     self.current_class["constants"].append(
-                        {"name": name, "comment": ""}
+                        {
+                            "name": name,
+                            "comment": self.find_nearest_comment(ctx.start.line),
+                        }
                     )
                 elif is_val:
                     self.current_class["properties"].append(
-                        {"name": name, "comment": ""}
+                        {
+                            "name": name,
+                            "comment": self.find_nearest_comment(ctx.start.line),
+                        }
                     )
 
     def enterFunctionDeclaration(self, ctx):
@@ -285,7 +320,9 @@ class KotlinListener(ParseTreeListener):
                 logger.debug(
                     f"Adding method '{name}' to class {self.current_class['name']}"
                 )
-                self.current_class["methods"].append({"name": name, "comment": ""})
+                self.current_class["methods"].append(
+                    {"name": name, "comment": self.find_nearest_comment(ctx.start.line)}
+                )
             else:
                 logger.debug("No function name found in this declaration")
 
@@ -307,12 +344,24 @@ def parse_kotlin_file(content, parser=None):
         lexer = KotlinLexer(input_stream)
         stream = CommonTokenStream(lexer)
 
+        # Extract comments before parsing
+        stream.fill()
+        comments = []
+        for token in stream.tokens:
+            if token.channel == Token.HIDDEN_CHANNEL and token.type in [
+                KotlinLexer.DelimitedComment,
+                KotlinLexer.LineComment,
+            ]:
+                comments.append((token.text.strip(), token.line))
+
         # Create the parser
         parser = KotlinParser(stream)
+        parser.removeErrorListeners()  # Remove default error listeners
+        parser.addErrorListener(DiagnosticErrorListener())  # Add diagnostic listener
         tree = parser.kotlinFile()
 
-        # Create and run the listener
-        listener = KotlinListener(content)
+        # Create and run the listener with comments
+        listener = KotlinListener(content, comments)
         walker = ParseTreeWalker()
         walker.walk(listener, tree)
 

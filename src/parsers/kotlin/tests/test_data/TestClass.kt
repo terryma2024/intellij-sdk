@@ -51,6 +51,7 @@ class TestClass<T> {
     class NestedClass {
         const val NESTED_CONSTANT = "nested"
         
+        // Nested function
         fun nestedFunction() {
             println("Nested function")
         }

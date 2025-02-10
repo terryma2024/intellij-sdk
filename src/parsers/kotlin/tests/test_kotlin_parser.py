@@ -84,7 +84,7 @@ def test_parse_general_settings(kt_general_settings_file):
         assert any(p["name"] == prop for p in properties), f"Missing property {prop}"
 
     # Check companion object constants
-    companion = general_settings.get("constants", [])
+    companion = general_settings.get("companion_objects", [])
     assert len(companion) > 0, "Should have companion object"
 
     constants = general_settings.get("constants", [])
@@ -117,6 +117,46 @@ def test_parse_general_settings(kt_general_settings_file):
         "GeneralSettingsState should have properties"
     )
 
+    # Check methods
+    methods = general_settings["methods"]
+    expected_methods = [
+        "getState",
+        "loadState",
+        "noStateLoaded",
+        "propertyChanged",
+        "defaultConfirmNewProject",
+        "getInstance",
+    ]
+    for method in expected_methods:
+        assert any(m["name"] == method for m in methods), f"Missing method {method}"
+
+    # Verify state management methods
+    state_methods = [
+        m for m in methods if m["name"] in {"getState", "loadState", "noStateLoaded"}
+    ]
+    assert len(state_methods) == 3, "Should have all state management methods"
+
+    # Check method comments
+    auto_save_method = next(
+        m for m in properties if m["name"] == "isAutoSaveIfInactive"
+    )
+    assert (
+        '@return `true` if IDE saves all files after "idle" timeout.'
+        in auto_save_method.get("comment", "")
+    ), "Should parse isAutoSaveIfInactive method comment correctly"
+
+    inactive_timeout_method = next(
+        m for m in properties if m["name"] == "inactiveTimeout"
+    )
+    assert (
+        "@return timeout in seconds after which IDE saves all files if there was no user activity."
+        in inactive_timeout_method.get("comment", "")
+    ), "Should parse inactiveTimeout method comment correctly"
+    assert (
+        "The method always returns positive (more than zero) value."
+        in inactive_timeout_method.get("comment", "")
+    ), "Should parse complete inactiveTimeout method comment"
+
 
 def test_parse_kotlin_file(kt_test_file):
     # Parse the file
@@ -132,30 +172,43 @@ def test_parse_kotlin_file(kt_test_file):
     # Check constants
     constants = class_info["constants"]
     expected_constants = [
-        {"name": "MAX_COUNT", "comment": ""},
-        {"name": "DEFAULT_NAME", "comment": ""},
-        {"name": "VERSION", "comment": ""},
-        {"name": "NESTED_CONSTANT", "comment": ""},
+        {"name": "MAX_COUNT", "comment": "Constant property"},
+        {"name": "DEFAULT_NAME", "comment": "No Comment"},
+        {"name": "VERSION", "comment": "No Comment"},
+        {"name": "NESTED_CONSTANT", "comment": "Nested class with constants"},
     ]
     assert len(constants) == len(expected_constants), "Should parse all constants"
     for expected in expected_constants:
-        assert any(c["name"] == expected["name"] for c in constants), (
-            f"Missing constant {expected['name']}"
+        matching_constant = next(
+            (c for c in constants if c["name"] == expected["name"]), None
+        )
+        assert matching_constant is not None, f"Missing constant {expected['name']}"
+        assert expected["comment"] in matching_constant.get("comment", ""), (
+            f"Incorrect or missing comment for constant {expected['name']}"
         )
 
     # Check methods
     methods = class_info["methods"]
     expected_methods = [
-        "basicFunction",
-        "parameterizedFunction",
-        "genericFunction",
-        "addPrefix",
-        "nestedFunction",
-        "interfaceMethod",
+        {"name": "basicFunction", "comment": "Different types of functions"},
+        {
+            "name": "parameterizedFunction",
+            "comment": "Function with parameters and return type",
+        },
+        {"name": "genericFunction", "comment": "Generic function"},
+        {"name": "addPrefix", "comment": "Extension function"},
+        {"name": "nestedFunction", "comment": "Nested function"},
+        {"name": "interfaceMethod", "comment": "Interface"},
     ]
     assert len(methods) == len(expected_methods), "Should parse all methods"
     for expected in expected_methods:
-        assert any(m["name"] == expected for m in methods), f"Missing method {expected}"
+        matching_method = next(
+            (m for m in methods if m["name"] == expected["name"]), None
+        )
+        assert matching_method is not None, f"Missing method {expected['name']}"
+        assert expected["comment"] in matching_method.get("comment", ""), (
+            f"Incorrect or missing comment for method {expected['name']}"
+        )
 
 
 def test_parse_kotlin_extension_function(kt_extension_test_file):
