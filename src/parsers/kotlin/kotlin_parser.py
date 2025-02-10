@@ -74,6 +74,30 @@ class KotlinListener(ParseTreeListener):
                 f"Created new {'interface' if is_interface else 'class'}: {class_name}"
             )
 
+    def enterClassParameter(self, ctx):
+        if self.current_class and self.current_class.get("is_data_class"):
+            # Look for parameter name in class constructor
+            name = None
+            is_private = False
+
+            # Check modifiers first
+            for child in ctx.getChildren():
+                if isinstance(child, KotlinParser.ModifierListContext):
+                    for modifier in child.getChildren():
+                        if modifier.getText() == "private":
+                            is_private = True
+                            break
+                elif isinstance(child, KotlinParser.SimpleIdentifierContext):
+                    name = child.getText()
+                    break
+
+            if name and not is_private:
+                # Add as property for data class parameters
+                self.current_class["properties"].append({"name": name, "comment": ""})
+                logger.debug(
+                    f"Added data class parameter '{name}' as property to class {self.current_class['name']}"
+                )
+
     def enterEnumClassBody(self, ctx):
         if self.current_class:
             self.current_class["is_enum"] = True
