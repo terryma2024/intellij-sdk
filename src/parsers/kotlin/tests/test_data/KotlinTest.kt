@@ -502,7 +502,7 @@ class Outer {
 
 
 //Interface.kt
-interface Foo {
+interface FooInterface {
     fun f()
     val a
 }

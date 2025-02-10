@@ -25,22 +25,95 @@ class KotlinListener(ParseTreeListener):
         # Track nesting level
         self.nesting_level += 1
 
-        found_class = False
+        # Look for class or interface declaration
+        found_type = False
+        is_interface = False
+        is_data_class = False
+        class_name = None
+        annotations = []
+
+        # First pass: collect annotations from ModifierList
+        for child in ctx.getChildren():
+            if isinstance(child, KotlinParser.ModifierListContext):
+                for modifier in child.getChildren():
+                    if isinstance(modifier, KotlinParser.AnnotationsContext):
+                        # Extract annotation name directly from modifier text
+                        annotation = modifier.getText().strip("@")
+                        annotations.append(annotation)
+                    elif modifier.getText() == "data":
+                        # Mark as data class if data modifier is found
+                        is_data_class = True
+
+        # Second pass: find class type and name
         for child in ctx.getChildren():
             text = child.getText()
-            if text == "class":
-                found_class = True
+            if text in ["class", "interface"]:
+                found_type = True
+                is_interface = text == "interface"
                 continue
-            if found_class and not text.startswith("<") and not text.startswith("@"):
-                # For nested classes, we want to capture their methods too
-                # but only store them in the top-level class
-                if self.nesting_level == 1:
-                    self.current_class = {
-                        "name": text,
-                        "constants": [],
-                        "methods": [],
-                    }
+            if found_type and isinstance(child, KotlinParser.SimpleIdentifierContext):
+                class_name = child.getText()
                 break
+
+        if class_name and self.nesting_level == 1:
+            # For nested classes, we want to capture their methods too
+            # but only store them in the top-level class
+            self.current_class = {
+                "name": class_name,
+                "constants": [],
+                "methods": [],
+                "companion_objects": [],
+                "properties": [],
+                "annotations": annotations,
+                "is_enum": False,
+                "is_interface": is_interface,
+                "is_data_class": is_data_class,
+                "enum_values": [],
+            }
+            logger.debug(
+                f"Created new {'interface' if is_interface else 'class'}: {class_name}"
+            )
+
+    def enterEnumClassBody(self, ctx):
+        if self.current_class:
+            self.current_class["is_enum"] = True
+            logger.debug(f"Marked class {self.current_class['name']} as enum class")
+
+    def enterEnumEntry(self, ctx):
+        if self.current_class and self.current_class["is_enum"]:
+            # Look for enum entry name
+            for child in ctx.getChildren():
+                if isinstance(child, KotlinParser.SimpleIdentifierContext):
+                    # Found an enum entry name
+                    self.current_class["enum_values"].append(
+                        {"name": child.getText(), "comment": ""}
+                    )
+                    logger.debug(
+                        f"Added enum value '{child.getText()}' to enum class {self.current_class['name']}"
+                    )
+                    break
+
+    def enterCompanionObject(self, ctx):
+        if self.current_class:
+            # Look for companion object name
+            name = None
+            for child in ctx.getChildren():
+                text = child.getText()
+                if text not in ["companion", "object"] and not text.startswith("@"):
+                    name = text
+                    break
+
+            # If no explicit name is found, use default name "Companion"
+            if not name:
+                name = "Companion"
+
+            # Add companion object to current class
+            self.current_class["companion_objects"].append(
+                {"name": name, "comment": ""}
+            )
+            logger.debug(
+                f"Added companion object '{name}' to class {self.current_class['name']}"
+            )
 
     def exitClassDeclaration(self, ctx):
         if self.nesting_level == 1 and self.current_class:
@@ -50,19 +123,59 @@ class KotlinListener(ParseTreeListener):
 
     def enterPropertyDeclaration(self, ctx):
         if self.current_class:
+            # Check if this property is directly under class body
+            parent = ctx.parentCtx
+            while parent is not None:
+                if isinstance(parent, KotlinParser.BlockContext):
+                    # If we find a block before class body, this is a local property
+                    return
+                if isinstance(parent, KotlinParser.ClassBodyContext):
+                    # Found class body, this is a class-level property
+                    break
+                parent = parent.parentCtx
+
+            # If we didn't find class body, this is not a class-level property
+            if not isinstance(parent, KotlinParser.ClassBodyContext):
+                return
+
             is_const = False
+            is_val = False
+            is_private = False
             name = None
             for child in ctx.getChildren():
-                if child.getText() == "const":
-                    is_const = True
-                elif child.getText() == "val" and is_const:
+                text = child.getText()
+                if isinstance(child, KotlinParser.ModifierListContext):
+                    for modifier_child in child.getChildren():
+                        modifier_text = modifier_child.getText()
+                        if modifier_text == "private":
+                            is_private = True
+                        elif modifier_text == "const":
+                            is_const = True
+                elif text in ["var", "val"]:
+                    is_val = True
+                else:
+                    # Look for the property name
                     for sibling in ctx.getChildren():
-                        if sibling.getText() not in ["const", "val", "="]:
-                            name = sibling.getText()
+                        if isinstance(sibling, KotlinParser.VariableDeclarationContext):
+                            for sibling_child in sibling.getChildren():
+                                if isinstance(
+                                    sibling_child,
+                                    KotlinParser.SimpleIdentifierContext,
+                                ):
+                                    name = sibling_child.getText()
+                                    break
                             break
-
-            if is_const and name:
-                self.current_class["constants"].append({"name": name, "comment": ""})
+                    if name:
+                        break
+            if name and not is_private:
+                if is_const:
+                    self.current_class["constants"].append(
+                        {"name": name, "comment": ""}
+                    )
+                elif is_val:
+                    self.current_class["properties"].append(
+                        {"name": name, "comment": ""}
+                    )
 
     def enterFunctionDeclaration(self, ctx):
         if self.current_class:
