@@ -1,8 +1,29 @@
 import os
 from typing import List, Dict
 from loguru import logger
+from multiprocessing import Pool
 from parsers.java.java_parser import parse_java_file
 from parsers.kotlin.kotlin_parser import parse_kotlin_file
+
+
+def parse_file(args) -> tuple[str, List[Dict], str]:
+    """Worker function to parse a single file."""
+    full_path, source_dir = args
+    try:
+        with open(full_path, "r", encoding="utf-8") as infile:
+            content = infile.read()
+
+        rel_path = os.path.relpath(full_path, source_dir)
+        formatted_path = rel_path.replace("/", ".")
+
+        if full_path.endswith(".java"):
+            class_info = parse_java_file(content)
+        else:
+            class_info = parse_kotlin_file(content)
+
+        return formatted_path, class_info, ""
+    except Exception as e:
+        return formatted_path, None, str(e)
 
 
 def count_source_files(source_dir: str) -> int:
@@ -104,7 +125,12 @@ class MarkdownWriter:
             )
 
 
-def process_directory(source_dir: str, base_output_file: str, max_lines: int = 250000):
+def process_directory(
+    source_dir: str,
+    base_output_file: str,
+    max_lines: int = 100000,
+    worker_num: int = 10,
+):
     """Process a directory containing Java and Kotlin files and generate markdown documentation."""
     # First count total files to process
     total_files = count_source_files(source_dir)
@@ -114,36 +140,31 @@ def process_directory(source_dir: str, base_output_file: str, max_lines: int = 2
     processed_files = 0
     last_progress_milestone = -1
 
+    # Collect all files to process
+    files_to_process = []
     for root, _, files in os.walk(source_dir):
         for file in files:
             if file.endswith((".java", ".kt")):
                 full_path = os.path.join(root, file)
-                logger.info(f"Processing file: {full_path}")
-                try:
-                    with open(full_path, "r", encoding="utf-8") as infile:
-                        content = infile.read()
+                files_to_process.append((full_path, source_dir))
 
-                    rel_path = os.path.relpath(full_path, source_dir)
-                    formatted_path = rel_path.replace("/", ".")
+    # Process files in parallel
+    with Pool(processes=worker_num) as pool:
+        for formatted_path, class_info, error in pool.imap_unordered(
+            parse_file, files_to_process
+        ):
+            processed_files += 1
+            if error:
+                logger.error(f"Error processing {formatted_path}: {error}")
+            elif class_info:
+                writer.write_class_info(formatted_path, class_info)
 
-                    if file.endswith(".java"):
-                        class_info = parse_java_file(content)
-                    else:
-                        class_info = parse_kotlin_file(content)
-
-                    if class_info:
-                        writer.write_class_info(formatted_path, class_info)
-
-                    processed_files += 1
-                    current_progress = int((processed_files / total_files) * 1000)
-                    if current_progress > last_progress_milestone:
-                        logger.info(
-                            f"Progress: {current_progress / 10:.1f}% ({processed_files}/{total_files} files)"
-                        )
-                        last_progress_milestone = current_progress
-
-                except Exception as e:
-                    logger.error(f"Error processing {full_path}: {e}")
+            current_progress = int((processed_files / total_files) * 1000)
+            if current_progress > last_progress_milestone:
+                logger.info(
+                    f"Progress: {current_progress / 10:.1f}% ({processed_files}/{total_files} files)"
+                )
+                last_progress_milestone = current_progress
 
     writer.close()
     logger.info(f"Markdown files generated with base name: {base_output_file}")

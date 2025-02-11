@@ -25,75 +25,131 @@ class KotlinListener(ParseTreeListener):
         self.comments = comments
         self.last_processed_line = -1
 
+    def _clean_comment(self, comment):
+        """Clean up comment by removing comment markers."""
+        cleaned = comment
+        if cleaned.startswith("/*") and cleaned.endswith("*/"):
+            cleaned = cleaned[2:-2].strip()
+        elif cleaned.startswith("//"):
+            cleaned = cleaned[2:].strip()
+        return cleaned
+
+    def _is_class_level_property(self, ctx):
+        """Check if a property is directly under class body."""
+        parent = ctx.parentCtx
+        while parent is not None:
+            if isinstance(parent, KotlinParser.BlockContext):
+                return False
+            if isinstance(parent, KotlinParser.ClassBodyContext):
+                return True
+            parent = parent.parentCtx
+        return False
+
+    def _extract_annotations(self, modifier_list_ctx):
+        """Extract annotations from ModifierList context."""
+        annotations = []
+        for modifier in modifier_list_ctx.getChildren():
+            if isinstance(modifier, KotlinParser.AnnotationsContext):
+                annotation = modifier.getText().strip("@")
+                annotations.append(annotation)
+        return annotations
+
+    def _extract_property_info(self, ctx):
+        """Extract property information from property declaration context."""
+        is_const = False
+        is_val = False
+        is_private = False
+        name = None
+
+        for child in ctx.getChildren():
+            text = child.getText()
+            if isinstance(child, KotlinParser.ModifierListContext):
+                for modifier_child in child.getChildren():
+                    modifier_text = modifier_child.getText()
+                    if modifier_text == "private":
+                        is_private = True
+                    elif modifier_text == "const":
+                        is_const = True
+            elif text in ["var", "val"]:
+                is_val = True
+            elif isinstance(child, KotlinParser.VariableDeclarationContext):
+                for sibling_child in child.getChildren():
+                    if isinstance(sibling_child, KotlinParser.SimpleIdentifierContext):
+                        name = sibling_child.getText()
+                        break
+
+        return name, is_const, is_val, is_private
+
     def find_nearest_comment(self, target_line):
-        # Search for comments between last processed line and current target line
+        """Find and return the nearest comment before the target line."""
         nearest_comment = None
         for comment, line in reversed(self.comments):
             if self.last_processed_line < line < target_line:
-                # Clean up the comment by removing comment markers
-                cleaned_comment = comment
-                # Remove multi-line comment markers
-                if cleaned_comment.startswith("/*") and cleaned_comment.endswith("*/"):
-                    cleaned_comment = cleaned_comment[2:-2].strip()
-                # Remove single-line comment markers
-                elif cleaned_comment.startswith("//"):
-                    cleaned_comment = cleaned_comment[2:].strip()
-                nearest_comment = cleaned_comment
+                nearest_comment = self._clean_comment(comment)
                 break
-        # Update last processed line
         self.last_processed_line = target_line
         return nearest_comment or "No Comment"
 
-    def enterClassDeclaration(self, ctx):
-        # Track nesting level
-        self.nesting_level += 1
+    def _create_class_info(
+        self, class_name, annotations, is_interface, is_data_class, line
+    ):
+        """Create a new class info dictionary with default values."""
+        return {
+            "name": class_name,
+            "constants": [],
+            "methods": [],
+            "companion_objects": [],
+            "properties": [],
+            "annotations": annotations,
+            "is_enum": False,
+            "is_interface": is_interface,
+            "is_data_class": is_data_class,
+            "enum_values": [],
+            "comment": self.find_nearest_comment(line),
+        }
 
-        # Look for class or interface declaration
-        found_type = False
-        is_interface = False
-        is_data_class = False
-        class_name = None
+    def _process_class_modifiers(self, ctx):
+        """Process class modifiers to extract annotations and class type."""
         annotations = []
+        is_data_class = False
 
-        # First pass: collect annotations from ModifierList
         for child in ctx.getChildren():
             if isinstance(child, KotlinParser.ModifierListContext):
                 for modifier in child.getChildren():
                     if isinstance(modifier, KotlinParser.AnnotationsContext):
-                        # Extract annotation name directly from modifier text
-                        annotation = modifier.getText().strip("@")
-                        annotations.append(annotation)
+                        annotations.append(modifier.getText().strip("@"))
                     elif modifier.getText() == "data":
-                        # Mark as data class if data modifier is found
                         is_data_class = True
 
-        # Second pass: find class type and name
+        return annotations, is_data_class
+
+    def _find_class_name_and_type(self, ctx):
+        """Find class name and determine if it's an interface."""
+        found_type = False
+        is_interface = False
+        class_name = None
+
         for child in ctx.getChildren():
             text = child.getText()
             if text in ["class", "interface"]:
                 found_type = True
                 is_interface = text == "interface"
-                continue
-            if found_type and isinstance(child, KotlinParser.SimpleIdentifierContext):
+            elif found_type and isinstance(child, KotlinParser.SimpleIdentifierContext):
                 class_name = child.getText()
                 break
 
+        return class_name, is_interface
+
+    def enterClassDeclaration(self, ctx):
+        self.nesting_level += 1
+
+        annotations, is_data_class = self._process_class_modifiers(ctx)
+        class_name, is_interface = self._find_class_name_and_type(ctx)
+
         if class_name and self.nesting_level == 1:
-            # For nested classes, we want to capture their methods too
-            # but only store them in the top-level class
-            self.current_class = {
-                "name": class_name,
-                "constants": [],
-                "methods": [],
-                "companion_objects": [],
-                "properties": [],
-                "annotations": annotations,
-                "is_enum": False,
-                "is_interface": is_interface,
-                "is_data_class": is_data_class,
-                "enum_values": [],
-                "comment": self.find_nearest_comment(ctx.start.line),
-            }
+            self.current_class = self._create_class_info(
+                class_name, annotations, is_interface, is_data_class, ctx.start.line
+            )
             logger.debug(
                 f"Created new {'interface' if is_interface else 'class'}: {class_name}"
             )
@@ -174,157 +230,100 @@ class KotlinListener(ParseTreeListener):
             self.current_class = None
         self.nesting_level -= 1
 
+    def _add_property_to_class(self, name, is_const, line):
+        """Add a property to the current class."""
+        property_info = {"name": name, "comment": self.find_nearest_comment(line)}
+        if is_const:
+            self.current_class["constants"].append(property_info)
+        else:
+            self.current_class["properties"].append(property_info)
+
     def enterPropertyDeclaration(self, ctx):
-        if self.current_class:
-            # Check if this property is directly under class body
-            parent = ctx.parentCtx
-            while parent is not None:
-                if isinstance(parent, KotlinParser.BlockContext):
-                    # If we find a block before class body, this is a local property
-                    return
-                if isinstance(parent, KotlinParser.ClassBodyContext):
-                    # Found class body, this is a class-level property
-                    break
-                parent = parent.parentCtx
+        if not self.current_class or not self._is_class_level_property(ctx):
+            return
 
-            # If we didn't find class body, this is not a class-level property
-            if not isinstance(parent, KotlinParser.ClassBodyContext):
-                return
+        name, is_const, is_val, is_private = self._extract_property_info(ctx)
+        if name and not is_private and (is_const or is_val):
+            self._add_property_to_class(name, is_const, ctx.start.line)
 
-            is_const = False
-            is_val = False
-            is_private = False
-            name = None
-            for child in ctx.getChildren():
-                text = child.getText()
-                if isinstance(child, KotlinParser.ModifierListContext):
-                    for modifier_child in child.getChildren():
-                        modifier_text = modifier_child.getText()
-                        if modifier_text == "private":
-                            is_private = True
-                        elif modifier_text == "const":
-                            is_const = True
-                elif text in ["var", "val"]:
-                    is_val = True
-                else:
-                    # Look for the property name
-                    for sibling in ctx.getChildren():
-                        if isinstance(sibling, KotlinParser.VariableDeclarationContext):
-                            for sibling_child in sibling.getChildren():
-                                if isinstance(
-                                    sibling_child,
-                                    KotlinParser.SimpleIdentifierContext,
-                                ):
-                                    name = sibling_child.getText()
-                                    break
-                            break
-                    if name:
-                        break
-            if name and not is_private:
-                if is_const:
-                    self.current_class["constants"].append(
-                        {
-                            "name": name,
-                            "comment": self.find_nearest_comment(ctx.start.line),
-                        }
-                    )
-                elif is_val:
-                    self.current_class["properties"].append(
-                        {
-                            "name": name,
-                            "comment": self.find_nearest_comment(ctx.start.line),
-                        }
-                    )
+    def _is_modifier_or_annotation(self, text):
+        """Check if the text is a modifier or annotation."""
+        return text.startswith("@") or text in [
+            "private",
+            "public",
+            "protected",
+            "internal",
+        ]
+
+    def _extract_extension_function_info(self, text, next_text, next_next_text):
+        """Extract extension function information."""
+        name = None
+        receiver_type = None
+
+        if "." in text:
+            parts = text.split(".")
+            receiver_type = parts[0]
+            if next_text and not next_text.startswith("("):
+                name = next_text
+        else:
+            receiver_type = text
+            if next_next_text and not next_next_text.startswith("("):
+                name = next_next_text
+
+        return name, receiver_type
+
+    def _is_valid_function_name(self, text):
+        """Check if the text could be a valid function name."""
+        return not any(
+            [
+                text.startswith("("),
+                text.startswith("<"),
+                text.startswith("@"),
+                text in ["fun", ":"],
+            ]
+        )
 
     def enterFunctionDeclaration(self, ctx):
-        if self.current_class:
-            # Collect all child nodes first
-            children = list(ctx.getChildren())
-            found_fun = False
-            name = None
-            receiver_type = None
+        if not self.current_class:
+            return
 
-            logger.debug(
-                f"Processing function declaration in class {self.current_class['name']}"
+        children = list(ctx.getChildren())
+        found_fun = False
+        name = None
+
+        for i, child in enumerate(children):
+            text = child.getText()
+
+            if text == "fun":
+                found_fun = True
+                continue
+
+            if not found_fun:
+                continue
+
+            if self._is_modifier_or_annotation(text) or text.startswith("<"):
+                continue
+
+            if name is None:
+                next_text = children[i + 1].getText() if i + 1 < len(children) else ""
+                next_next_text = (
+                    children[i + 2].getText() if i + 2 < len(children) else ""
+                )
+
+                if "." in text or (text and next_text == "."):
+                    name, _ = self._extract_extension_function_info(
+                        text, next_text, next_next_text
+                    )
+                    if name:
+                        break
+                elif self._is_valid_function_name(text):
+                    name = text
+                    break
+
+        if name:
+            self.current_class["methods"].append(
+                {"name": name, "comment": self.find_nearest_comment(ctx.start.line)}
             )
-            logger.debug(f"Total children nodes: {len(children)}")
-
-            for i, child in enumerate(children):
-                text = child.getText()
-                logger.debug(f"Processing node {i}: '{text}'")
-
-                if text == "fun":
-                    found_fun = True
-                    logger.debug("Found 'fun' keyword")
-                    continue
-
-                if found_fun:
-                    # Skip annotations and modifiers
-                    if text.startswith("@") or text in [
-                        "private",
-                        "public",
-                        "protected",
-                        "internal",
-                    ]:
-                        logger.debug(f"Skipping modifier/annotation: {text}")
-                        continue
-
-                    # Skip generic type parameters
-                    if text.startswith("<"):
-                        logger.debug(f"Skipping generic parameter: {text}")
-                        continue
-
-                    # Look for receiver type and function name
-                    if not name:
-                        # Check for extension function pattern
-                        next_text = (
-                            children[i + 1].getText() if i + 1 < len(children) else ""
-                        )
-                        next_next_text = (
-                            children[i + 2].getText() if i + 2 < len(children) else ""
-                        )
-                        logger.debug(
-                            f"Checking for extension function. Current text: '{text}', Next text: '{next_text}', Next next text: '{next_next_text}'"
-                        )
-
-                        if "." in text or (text and next_text == "."):
-                            # This is an extension function
-                            if "." in text:
-                                parts = text.split(".")
-                                receiver_type = parts[0]
-                                if next_text and not next_text.startswith("("):
-                                    name = next_text
-                            else:
-                                receiver_type = text
-                                if next_next_text and not next_next_text.startswith(
-                                    "("
-                                ):
-                                    name = next_next_text
-
-                            if name:
-                                logger.debug(
-                                    f"Found extension function - Receiver: {receiver_type}, Name: {name}"
-                                )
-                                break
-                        elif (
-                            not text.startswith("(")
-                            and not text.startswith("<")
-                            and not text.startswith("@")
-                            and text not in ["fun", ":"]
-                        ):
-                            name = text
-                            logger.debug(f"Found regular function name: {name}")
-                            break
-
-            if name:
-                logger.debug(
-                    f"Adding method '{name}' to class {self.current_class['name']}"
-                )
-                self.current_class["methods"].append(
-                    {"name": name, "comment": self.find_nearest_comment(ctx.start.line)}
-                )
-            else:
-                logger.debug("No function name found in this declaration")
 
 
 def parse_kotlin_file(content, parser=None):
