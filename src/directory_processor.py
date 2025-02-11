@@ -5,6 +5,14 @@ from parsers.java.java_parser import parse_java_file
 from parsers.kotlin.kotlin_parser import parse_kotlin_file
 
 
+def count_source_files(source_dir: str) -> int:
+    """Count total number of Java and Kotlin files in the source directory."""
+    total_count = 0
+    for root, _, files in os.walk(source_dir):
+        total_count += sum(1 for file in files if file.endswith((".java", ".kt")))
+    return total_count
+
+
 class MarkdownWriter:
     def __init__(self, base_filename: str, max_lines: int = 500000):
         self.base_filename = base_filename
@@ -98,7 +106,13 @@ class MarkdownWriter:
 
 def process_directory(source_dir: str, base_output_file: str, max_lines: int = 250000):
     """Process a directory containing Java and Kotlin files and generate markdown documentation."""
+    # First count total files to process
+    total_files = count_source_files(source_dir)
+    logger.info(f"Found {total_files} Java and Kotlin files to process")
+
     writer = MarkdownWriter(base_output_file, max_lines)
+    processed_files = 0
+    last_progress_milestone = -1
 
     for root, _, files in os.walk(source_dir):
         for file in files:
@@ -119,6 +133,14 @@ def process_directory(source_dir: str, base_output_file: str, max_lines: int = 2
 
                     if class_info:
                         writer.write_class_info(formatted_path, class_info)
+
+                    processed_files += 1
+                    current_progress = int((processed_files / total_files) * 1000)
+                    if current_progress > last_progress_milestone:
+                        logger.info(
+                            f"Progress: {current_progress / 10:.1f}% ({processed_files}/{total_files} files)"
+                        )
+                        last_progress_milestone = current_progress
 
                 except Exception as e:
                     logger.error(f"Error processing {full_path}: {e}")

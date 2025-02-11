@@ -17,7 +17,7 @@ def setup_logger():
     )
 
 
-def main():
+def _main():
     file = "/Users/bytedance/Projects/ideaIC-2024.2-sources/com/intellij/ide/GeneralSettings.kt"
     with open(file, "r", encoding="utf-8") as f:
         content = f.read()
@@ -25,7 +25,7 @@ def main():
         print(class_info)
 
 
-def _main():
+def main():
     setup_logger()
 
     logger.info("Starting the application...")
